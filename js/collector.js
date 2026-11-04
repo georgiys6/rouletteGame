@@ -57,7 +57,8 @@ function setItems(list) {
     var played = items.filter(function (g) { return g.playtime > 120; }).length;
     status('Найдено игр: ' + items.length + ' (с часами: ' + withHours + ', из них больше 2 ч: ' + played + ')');
   } else if ($p('[data-src]').value === 'steam') {
-    status('⚠️ Найдено игр: ' + items.length + ', но без часов — рулетка не сможет отсеять уже начатые. Откройте steamcommunity.com/my/games/?tab=all и нажмите закладку там.');
+    status('⚠️ Найдено игр: ' + items.length + ', но без часов — рулетка не сможет отсеять уже начатые. Прокрутите список игр до конца и нажмите ↻.' +
+      (steamDiag.length ? ' Что пробовал: ' + steamDiag.join('; ') + '.' : ''));
   } else status('Найдено игр: ' + items.length);
 }
 
@@ -115,13 +116,65 @@ function steamFromDoc(doc) {
   if (!games.length) return null;
   return games.map(function (g) { return steamGame(g.appid, g.name, g.playtime_forever || 0); });
 }
+// весь код страницы одной строкой, с раскавыченными \" и &quot; — чтобы найти JSON, спрятанный в скриптах и атрибутах
+function steamHtml(doc) {
+  var parts = [doc.documentElement.innerHTML];
+  [].forEach.call(doc.querySelectorAll('script, template'), function (s) { parts.push(s.textContent || s.innerHTML); });
+  return parts.join('\n').replace(/\\"/g, '"').replace(/&quot;/g, '"');
+}
+// любые объекты вида {"appid":620,"name":"Portal 2","playtime_forever":754,…} в коде страницы (новая React-вёрстка Steam)
+function steamFromEmbedded(doc) {
+  var html = steamHtml(doc), byId = {}, withTime = 0;
+  var re = /\{[^{}]*"appid"\s*:\s*"?(\d+)"?[^{}]*\}/g, m;
+  while ((m = re.exec(html))) {
+    var obj = m[0];
+    var pt = obj.match(/"playtime_forever"\s*:\s*"?(\d+)/);
+    var nm = obj.match(/"name"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (!pt && !nm) continue;
+    var g = byId[m[1]] || (byId[m[1]] = { appid: m[1] });
+    if (nm && !g.name) { try { g.name = JSON.parse('"' + nm[1] + '"'); } catch (e) { g.name = nm[1]; } }
+    if (pt) { g.playtime = Math.max(g.playtime || 0, +pt[1]); withTime++; }
+  }
+  if (!withTime) return null;
+  var list = Object.keys(byId).map(function (k) { return byId[k]; }).filter(function (g) { return g.name; });
+  return list.length ? list.map(function (g) { return steamGame(g.appid, g.name, g.playtime || 0); }) : null;
+}
+// строки списка на странице: «Всего сыграно: 12,5 ч» рядом со ссылкой на игру
+function steamFromRows() {
+  var rows = {}, order = [];
+  [].forEach.call(document.querySelectorAll('a[href*="/app/"]'), function (a) {
+    var id = (a.href.match(/\/app\/(\d+)/) || [])[1];
+    if (!id) return;
+    if (!rows[id]) { rows[id] = { id: id, links: [] }; order.push(id); }
+    rows[id].links.push(a);
+  });
+  var found = 0;
+  var list = order.map(function (id) {
+    var r = rows[id], el = r.links[0];
+    // поднимаемся до контейнера строки: пока внутри только ссылки на эту же игру
+    while (el.parentElement && el.parentElement !== document.body) {
+      var ids = [].map.call(el.parentElement.querySelectorAll('a[href*="/app/"]'), function (x) { return (x.href.match(/\/app\/(\d+)/) || [])[1]; });
+      if (ids.some(function (x) { return x && x !== id; })) break;
+      el = el.parentElement;
+    }
+    var title = r.links.map(function (a) { return a.textContent.trim(); }).filter(Boolean)[0] ||
+      ((el.querySelector('img[alt]') || {}).alt || '').trim();
+    var min = maxMinutesIn(el.textContent);
+    if (min != null) found++;
+    return { title: title, extId: id, playtime: min, url: 'https://store.steampowered.com/app/' + id + '/' };
+  }).filter(function (g) { return g.title; });
+  if (!found) return null;
+  // Steam не пишет часы у игр, которые ни разу не запускали
+  list.forEach(function (g) { if (g.playtime == null) g.playtime = 0; });
+  return list;
+}
 function steamConfig(name) {
   var el = document.getElementById('application_config');
   var v = el && el.getAttribute('data-' + name);
   if (!v) return null;
   try { return JSON.parse(v); } catch (e) { return v; }
 }
-function steamId() {
+async function steamId(base) {
   // чей профиль открыт; иначе — вошедший пользователь
   if (window.g_rgProfileData && window.g_rgProfileData.steamid) return String(window.g_rgProfileData.steamid);
   var m = location.pathname.match(/^\/profiles\/(\d{17})/);
@@ -129,12 +182,21 @@ function steamId() {
   var ui = steamConfig('userinfo');
   if (ui && ui.steamid) return String(ui.steamid);
   if (window.g_steamID) return String(window.g_steamID);
+  m = steamHtml(document).match(/"steamid"\s*:\s*"(7656\d{13})"/);
+  if (m) return m[1];
+  if (/steamcommunity\.com/.test(location.hostname)) {
+    var x = await (await fetch(base + '/?xml=1', { credentials: 'include' })).text();
+    m = x.match(/<steamID64>(\d{17})<\/steamID64>/);
+    if (m) return m[1];
+  }
   return null;
 }
-async function steamFromApi() {
+async function steamFromApi(base) {
   var token = steamConfig('loyalty_webapi_token');
-  var sid = steamId();
-  if (!token || !sid) return null;
+  if (!token) { var t = steamHtml(document).match(/"(?:loyalty_)?webapi_token"\s*:\s*"([^"]+)"/); token = t && t[1]; }
+  if (!token) throw new Error('нет токена сессии на этой странице');
+  var sid = await steamId(base);
+  if (!sid) throw new Error('не нашёл SteamID');
   var r = await fetch('https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?access_token=' + encodeURIComponent(token) +
     '&steamid=' + sid + '&include_appinfo=1&include_played_free_games=1');
   if (!r.ok) throw new Error('Steam API ' + r.status);
@@ -160,15 +222,18 @@ async function collectSteam() {
   var base = m ? m[0] : '/my';
   var onCommunity = /steamcommunity\.com/.test(location.hostname);
   var tries = [
-    function () { return steamFromDoc(document); },
-    function () { status('Запрашиваю игры и часы через Steam API…'); return steamFromApi(); },
-    onCommunity && function () { status('Читаю XML-список игр профиля…'); return steamFromXml(base); },
-    onCommunity && function () { status('Загружаю страницу игр профиля…'); return getDoc(base + '/games/?tab=all').then(steamFromDoc); },
+    ['страница', function () { return steamFromDoc(document) || steamFromEmbedded(document); }],
+    ['API', function () { status('Запрашиваю игры и часы через Steam API…'); return steamFromApi(base); }],
+    onCommunity && ['XML', function () { status('Читаю XML-список игр профиля…'); return steamFromXml(base); }],
+    onCommunity && ['страница игр', function () { status('Загружаю страницу игр профиля…'); return getDoc(base + '/games/?tab=all').then(function (d) { return steamFromDoc(d) || steamFromEmbedded(d); }); }],
+    ['строки списка', function () { return steamFromRows(); }],
   ];
   var list = null;
+  steamDiag = [];
   for (var i = 0; !list && i < tries.length; i++) {
     if (!tries[i]) continue;
-    try { list = await tries[i](); } catch (e) { console.warn('[Backlog Roulette]', e); }
+    try { list = await tries[i][1](); if (!list) steamDiag.push(tries[i][0] + ': часов нет'); }
+    catch (e) { steamDiag.push(tries[i][0] + ': ' + e.message); console.warn('[Backlog Roulette]', tries[i][0], e); }
   }
   if (list) return list;
   // крайний случай: ссылки на приложения со страницы — только названия, без часов
@@ -179,6 +244,7 @@ async function collectSteam() {
   if (!list.length) throw new Error('Не нашёл игр. Войдите в Steam, откройте steamcommunity.com/my/games/?tab=all и проверьте, что сведения об играх в профиле открыты.');
   return list;
 }
+var steamDiag = [];
 
 /* ---------- Backloggd ---------- */
 function backloggdFromDoc(doc, out) {
@@ -239,12 +305,24 @@ async function collectEpic() {
 
 /* ---------- универсальный: выделение или обложки ---------- */
 // «12,5 ч», «3 часа», «40 мин», «12.5 hrs», «2 hours on record» → минуты; если часов в тексте нет — undefined
-function minutesIn(text) {
-  var m = String(text || '').match(/(\d+(?:[.,]\d+)?)\s*(ч\.?|час(?:а|ов)?|h|hrs?|hours?)(?![\p{L}])/iu);
-  if (m) return Math.round(parseFloat(m[1].replace(',', '.')) * 60);
-  m = String(text || '').match(/(\d+)\s*(мин|min|minutes?)(?![\p{L}])/iu);
-  return m ? +m[1] : undefined;
+// «12,5» → 12.5 · «1,234.5» / «1 234,5» → 1234.5 · «1,234» → 1234
+function parseNum(s) {
+  s = s.replace(/[\s  ]/g, '');
+  var d = s.match(/[.,](\d{1,2})$/);
+  return parseFloat((d ? s.slice(0, -d[0].length) : s).replace(/[.,]/g, '') + (d ? '.' + d[1] : ''));
 }
+var HOURS_RE = /(\d(?:[\d  ,.]*\d)?)\s*(ч\.?|час(?:а|ов)?|h|hrs?|hours?)(?![\p{L}])/giu;
+var MINS_RE = /(\d+)\s*(мин|min|minutes?)(?![\p{L}])/giu;
+function allMinutesIn(text) {
+  text = String(text || '');
+  var out = [], m;
+  HOURS_RE.lastIndex = 0; while ((m = HOURS_RE.exec(text))) out.push(Math.round(parseNum(m[1]) * 60));
+  MINS_RE.lastIndex = 0; while ((m = MINS_RE.exec(text))) out.push(+m[1]);
+  return out.filter(function (x) { return isFinite(x); });
+}
+function minutesIn(text) { var a = allMinutesIn(text); return a.length ? a[0] : undefined; }
+// в строке Steam бывает и «за 2 недели: 1 ч», и «всего: 30 ч» — берём наибольшее
+function maxMinutesIn(text) { var a = allMinutesIn(text); return a.length ? Math.max.apply(null, a) : undefined; }
 function collectGeneric() {
   var sel = String(window.getSelection ? window.getSelection() : '').trim();
   // выделенный список: «Название — 12 ч» → часы тоже забираем
