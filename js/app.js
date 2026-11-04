@@ -33,6 +33,24 @@ function toast(msg, type = '') {
   $('#toasts').append(el);
   setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .4s'; setTimeout(() => el.remove(), 400); }, 3800);
 }
+// своё окно подтверждения вместо confirm(): встроенные браузеры (например, в VS Code) и галочка
+// «запретить диалоги» молча отвечают на confirm() «Отмена», и кнопка будто не работает
+function askConfirm({ title, html, ok = 'Да' }) {
+  const m = $('#confirmModal');
+  $('#confirmTitle').textContent = title;
+  $('#confirmBody').innerHTML = html;
+  $('#confirmOk').textContent = ok;
+  m.hidden = false;
+  $('#confirmCancel').focus();
+  return new Promise((resolve) => {
+    const done = (v) => { m.hidden = true; m.onclick = null; document.removeEventListener('keydown', onKey, true); resolve(v); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } };
+    document.addEventListener('keydown', onKey, true);
+    $('#confirmOk').onclick = () => done(true);
+    $('#confirmCancel').onclick = () => done(false);
+    m.onclick = (e) => { if (e.target === m) done(false); };
+  });
+}
 function coverOf(g) {
   if (g.cover) return g.cover;
   if (g.source === 'steam' && g.extId) return `https://cdn.cloudflare.steamstatic.com/steam/apps/${g.extId}/header.jpg`;
@@ -456,16 +474,19 @@ $('#libSearch').oninput = () => { libLimit = 120; renderLibrary(); };
 // «Очистить библиотеку»: удаляет импортированные и добавленные вручную игры, отметки «пройдена/исключена»
 // и скрывает игры из синхронизации (сам файл data/games.json из браузера не изменить).
 // Новые игры, которые появятся при следующей синхронизации, будут видны. История и настройки не трогаются.
-$('#libClear').onclick = () => {
-  if (spinning) return;
+$('#libClear').onclick = async () => {
+  if (spinning) { toast('Дождитесь, пока колесо остановится', 'err'); return; }
   const imp = state.imported.length, rem = remote.games.filter((g) => !state.hidden.includes(g.id)).length;
-  if (!confirm(`Очистить библиотеку?
-
-• импортированные и добавленные вручную игры: ${imp} — удалятся
-• игры из синхронизации: ${rem} — скроются (их можно вернуть)
-• отметки «пройдена» и «исключена» — сбросятся
-
-История и настройки останутся.`)) return;
+  const ok = await askConfirm({
+    title: 'Очистить библиотеку?',
+    ok: '🧹 Очистить',
+    html: `<ul>
+      <li>импортированные и добавленные вручную игры: <b>${imp}</b> — удалятся</li>
+      <li>игры из синхронизации: <b>${rem}</b> — скроются (их можно вернуть)</li>
+      <li>отметки «пройдена» и «исключена» — сбросятся</li></ul>
+      История и настройки останутся.`,
+  });
+  if (!ok) return;
   state.imported = [];
   state.flags = {};
   state.hidden = [...new Set([...state.hidden, ...remote.games.map((g) => g.id)])];
@@ -705,7 +726,7 @@ function bindSettings() {
     e.target.value = '';
   };
   $('#wipeBtn').onclick = async () => {
-    if (!confirm('Удалить все импортированные игры, отметки, историю, гифки и настройки в этом браузере?')) return;
+    if (!(await askConfirm({ title: 'Сбросить всё?', ok: 'Сбросить', html: 'Удалятся все импортированные игры, отметки, история, гифки и настройки в этом браузере.' }))) return;
     wipeState(); await delFile('gif'); await delFile('winGif'); location.reload();
   };
 }
