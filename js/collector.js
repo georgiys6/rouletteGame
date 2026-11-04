@@ -52,7 +52,13 @@ function setItems(list) {
     seen[key] = 1; return true;
   });
   $p('[data-list]').value = items.map(function (g) { return g.title; }).join('\n');
-  status('Найдено игр: ' + items.length);
+  var withHours = items.filter(function (g) { return g.playtime != null; }).length;
+  if (withHours) {
+    var played = items.filter(function (g) { return g.playtime > 120; }).length;
+    status('Найдено игр: ' + items.length + ' (с часами: ' + withHours + ', из них больше 2 ч: ' + played + ')');
+  } else if ($p('[data-src]').value === 'steam') {
+    status('⚠️ Найдено игр: ' + items.length + ', но без часов — рулетка не сможет отсеять уже начатые. Откройте steamcommunity.com/my/games/?tab=all и нажмите закладку там.');
+  } else status('Найдено игр: ' + items.length);
 }
 
 function payload() {
@@ -97,30 +103,80 @@ function getDoc(url) {
 function absUrl(u) { try { return new URL(u, location.href).href; } catch (e) { return u; } }
 
 /* ---------- Steam ---------- */
+// Нужны не только названия, но и наигранные часы (playtime, в минутах), иначе рулетка не поймёт, что игра уже начата.
+// Пробуем по очереди: данные на странице → Web API с токеном вашей сессии → XML профиля → (крайний случай) ссылки без часов.
+function steamGame(appid, name, minutes) {
+  return { title: name, extId: String(appid), playtime: minutes, url: 'https://store.steampowered.com/app/' + appid + '/' };
+}
 function steamFromDoc(doc) {
   var el = doc.querySelector('[data-profile-gameslist]');
   if (!el) return null;
-  var data = JSON.parse(el.getAttribute('data-profile-gameslist'));
-  return (data.rgGames || []).map(function (g) {
-    return { title: g.name, extId: String(g.appid), playtime: g.playtime_forever || 0, url: 'https://store.steampowered.com/app/' + g.appid + '/' };
+  var games = JSON.parse(el.getAttribute('data-profile-gameslist')).rgGames || [];
+  if (!games.length) return null;
+  return games.map(function (g) { return steamGame(g.appid, g.name, g.playtime_forever || 0); });
+}
+function steamConfig(name) {
+  var el = document.getElementById('application_config');
+  var v = el && el.getAttribute('data-' + name);
+  if (!v) return null;
+  try { return JSON.parse(v); } catch (e) { return v; }
+}
+function steamId() {
+  // чей профиль открыт; иначе — вошедший пользователь
+  if (window.g_rgProfileData && window.g_rgProfileData.steamid) return String(window.g_rgProfileData.steamid);
+  var m = location.pathname.match(/^\/profiles\/(\d{17})/);
+  if (m) return m[1];
+  var ui = steamConfig('userinfo');
+  if (ui && ui.steamid) return String(ui.steamid);
+  if (window.g_steamID) return String(window.g_steamID);
+  return null;
+}
+async function steamFromApi() {
+  var token = steamConfig('loyalty_webapi_token');
+  var sid = steamId();
+  if (!token || !sid) return null;
+  var r = await fetch('https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?access_token=' + encodeURIComponent(token) +
+    '&steamid=' + sid + '&include_appinfo=1&include_played_free_games=1');
+  if (!r.ok) throw new Error('Steam API ' + r.status);
+  var games = ((await r.json()).response || {}).games || [];
+  if (!games.length) return null;
+  return games.map(function (g) { return steamGame(g.appid, g.name || ('App ' + g.appid), g.playtime_forever || 0); });
+}
+async function steamFromXml(base) {
+  var r = await fetch(base + '/games/?tab=all&xml=1', { credentials: 'include' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  var xml = new DOMParser().parseFromString(await r.text(), 'text/xml');
+  var nodes = xml.querySelectorAll('games > game');
+  if (!nodes.length) return null;
+  var txt = function (n, sel) { var e = n.querySelector(sel); return e ? e.textContent.trim() : ''; };
+  return [].map.call(nodes, function (n) {
+    // «1,234.5» → 1234.5 ч; нет тега — игру не запускали
+    var h = parseFloat(txt(n, 'hoursOnRecord').replace(/[,\s]/g, '')) || 0;
+    return steamGame(txt(n, 'appID'), txt(n, 'name'), Math.round(h * 60));
   });
 }
 async function collectSteam() {
-  var list = steamFromDoc(document);
-  if (!list) {
-    var m = location.pathname.match(/^\/(id|profiles)\/[^/]+/);
-    var base = m ? m[0] : '/my';
-    status('Загружаю список игр профиля…');
-    list = steamFromDoc(await getDoc(base + '/games/?tab=all'));
+  var m = location.pathname.match(/^\/(id|profiles)\/[^/]+/);
+  var base = m ? m[0] : '/my';
+  var onCommunity = /steamcommunity\.com/.test(location.hostname);
+  var tries = [
+    function () { return steamFromDoc(document); },
+    function () { status('Запрашиваю игры и часы через Steam API…'); return steamFromApi(); },
+    onCommunity && function () { status('Читаю XML-список игр профиля…'); return steamFromXml(base); },
+    onCommunity && function () { status('Загружаю страницу игр профиля…'); return getDoc(base + '/games/?tab=all').then(steamFromDoc); },
+  ];
+  var list = null;
+  for (var i = 0; !list && i < tries.length; i++) {
+    if (!tries[i]) continue;
+    try { list = await tries[i](); } catch (e) { console.warn('[Backlog Roulette]', e); }
   }
-  if (!list) {
-    // на случай новой вёрстки: собираем ссылки на приложения
-    list = [].map.call(document.querySelectorAll('a[href*="/app/"]'), function (a) {
-      var id = (a.href.match(/\/app\/(\d+)/) || [])[1];
-      return { title: a.textContent.trim(), extId: id };
-    }).filter(function (g) { return g.title && g.extId; });
-  }
-  if (!list.length) throw new Error('Не нашёл игр. Откройте steamcommunity.com/my/games/?tab=all и проверьте, что профиль открыт.');
+  if (list) return list;
+  // крайний случай: ссылки на приложения со страницы — только названия, без часов
+  list = [].map.call(document.querySelectorAll('a[href*="/app/"]'), function (a) {
+    var id = (a.href.match(/\/app\/(\d+)/) || [])[1];
+    return { title: a.textContent.trim(), extId: id };
+  }).filter(function (g) { return g.title && g.extId; });
+  if (!list.length) throw new Error('Не нашёл игр. Войдите в Steam, откройте steamcommunity.com/my/games/?tab=all и проверьте, что сведения об играх в профиле открыты.');
   return list;
 }
 
