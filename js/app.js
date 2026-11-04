@@ -105,11 +105,11 @@ function eligibility(g) {
   if (f.done) return 'done';
   if (f.off) return 'off';
   if (S.sources[g.source] === false) return 'source';
-  // часы учитываются для любого источника, где они известны (Steam, импорт с колонкой часов и т. п.)
-  if (g.playtime != null) {
-    const maxMin = S.onlyUnplayed ? 0 : (+S.steamMaxHours || 0) * 60;
-    if (g.playtime > maxMin) return 'played';
-  } else if (S.requireHours) return 'nohours';
+  // часы (playtime, минуты) учитываются для любого источника, где они сохранились при импорте
+  const h = g.playtime;
+  if (S.hoursMode === 'upto' && h != null && h > (+S.steamMaxHours || 0) * 60) return 'played';
+  if (S.hoursMode === 'zero' && h > 0) return 'played';
+  if (S.hoursMode === 'unknown' && h != null) return 'hashours';
   if ((g.source === 'psn' || g.source === 'xbox') && g.progress != null && g.progress > S.maxProgress) return 'filtered';
   return 'ok';
 }
@@ -120,12 +120,13 @@ function recentKeys() {
   return new Set(n ? state.history.slice(0, n).map((h) => normTitle(h.title)) : []);
 }
 
+let blockedKeys = new Set();   // игры, убранные из-за другой копии (наиграно / пройдено в другом источнике)
 function rebuildPool() {
   const ok = library.filter((g) => eligibility(g) === 'ok');
   // одна и та же игра из разных источников / с разным написанием — одна запись в пуле.
   // флаг «пройдено»/«исключена», а также наигранные часы или прогресс на любой копии исключают игру целиком
   // (например, в Steam 30 ч, а в Xbox та же игра без данных — на колесо она не попадёт).
-  const doneKeys = new Set(library.filter((g) => {
+  const doneKeys = blockedKeys = new Set(library.filter((g) => {
     const e = eligibility(g);
     return e === 'done' || e === 'off' || e === 'played' || e === 'filtered' || flag(g.id).done || flag(g.id).off;
   }).map((g) => normTitle(g.title)));
@@ -420,7 +421,7 @@ document.addEventListener('paste', (e) => {
 
 // ================= библиотека =================
 let libLimit = 120;
-const STATUS_LABEL = { ok: 'в рулетке', filtered: 'отсеяна по прогрессу', played: 'уже наиграно больше лимита', nohours: 'нет данных о часах', off: 'исключена', done: 'пройдена', source: 'источник выключен' };
+const STATUS_LABEL = { ok: 'в рулетке', filtered: 'отсеяна по прогрессу', played: 'уже наиграно', hashours: 'есть часы (фильтр «без данных»)', off: 'исключена', done: 'пройдена', source: 'источник выключен' };
 
 function renderLibrary() {
   const q = $('#libSearch').value.trim().toLowerCase();
@@ -432,7 +433,7 @@ function renderLibrary() {
     if (st) {
       const e = eligibility(g);
       if (st === 'pool' && e !== 'ok') return false;
-      if (st === 'filtered' && !['filtered', 'played', 'nohours', 'source'].includes(e)) return false;
+      if (st === 'filtered' && !['filtered', 'played', 'hashours', 'source'].includes(e)) return false;
       if (st !== 'pool' && st !== 'filtered' && e !== st) return false;
     }
     return true;
@@ -450,7 +451,7 @@ function renderLibrary() {
       <div class="g-body">
         <div class="g-title">${g.url ? `<a href="${esc(g.url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(g.title)}</a>` : esc(g.title)}</div>
         <div class="g-meta">${badge(g.source)}<span>${esc(metaText(g))}</span></div>
-        <div class="g-meta"><span>${STATUS_LABEL[e]}</span></div>
+        <div class="g-meta"><span>${e === 'ok' && blockedKeys.has(normTitle(g.title)) ? 'не в рулетке: наиграно или пройдено в другом источнике' : STATUS_LABEL[e]}</span></div>
         <div class="g-actions">
           <button class="btn ${!f.off && !f.done ? 'on' : ''}" data-act="off" title="Участвует в рулетке">${f.off ? '✕ исключена' : '🎡 в рулетке'}</button>
           <button class="btn ${f.done ? 'on' : ''}" data-act="done">${f.done ? '✓ пройдена' : 'пройдена?'}</button>
@@ -515,6 +516,9 @@ $('#addForm').onsubmit = (e) => {
 function importGames(source, games, replace) {
   const stamp = Date.now();
   games = games.map((g) => ({ ...g, imported: stamp }));
+  // если в новом импорте часов нет, а раньше для этой игры они были — сохраняем старые
+  const oldHours = new Map(state.imported.filter((g) => g.playtime != null).map((g) => [g.id, g.playtime]));
+  for (const g of games) if (g.playtime == null && oldHours.has(g.id)) g.playtime = oldHours.get(g.id);
   if (replace) {
     const srcs = new Set(games.map((g) => g.source).concat(source));
     state.imported = state.imported.filter((g) => !srcs.has(g.source));
@@ -645,10 +649,15 @@ function bindSettings() {
   const chk = (id, key, after) => { const el = $('#' + id); el.checked = !!S[key]; el.onchange = () => { S[key] = el.checked; save(); after?.(); }; };
   const refilter = () => { rebuildPool(); refillWheel(); renderLibrary(); };
 
-  num('steamMaxHours', 'steamMaxHours', refilter);
-  const syncHours = () => { $('#steamMaxHours').disabled = !!S.onlyUnplayed; };
-  chk('onlyUnplayed', 'onlyUnplayed', () => { syncHours(); refilter(); });
-  chk('requireHours', 'requireHours', refilter);
+  // фильтр по часам — на главной: «до N ч» / «0 ч» / «без данных» / «не учитывать»
+  const hm = $('#hoursMode'), hmax = $('#steamMaxHours');
+  const syncHours = () => {
+    hm.value = S.hoursMode; if (!hm.value) hm.value = S.hoursMode = 'upto';
+    hmax.value = S.steamMaxHours;
+    $('#hoursMaxWrap').hidden = S.hoursMode !== 'upto';
+  };
+  hm.onchange = () => { S.hoursMode = hm.value; save(); syncHours(); if (!spinning) refilter(); };
+  hmax.onchange = () => { S.steamMaxHours = Math.max(0, +hmax.value || 0); save(); syncHours(); if (!spinning) refilter(); };
   syncHours();
   num('maxProgress', 'maxProgress', refilter);
   const nr = $('#noRepeat');

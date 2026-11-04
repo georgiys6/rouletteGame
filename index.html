@@ -81,6 +81,16 @@
               </div>
               <input type="range" id="spinSec" min="1" max="20" step="0.5" aria-label="Длительность вращения, секунд">
             </div>
+            <div class="field">
+              <span>Часы в игре</span>
+              <select id="hoursMode">
+                <option value="upto">до N часов (и игры без данных)</option>
+                <option value="zero">вообще без часов: 0 ч или нет данных</option>
+                <option value="unknown">только игры без данных о часах</option>
+                <option value="off">не учитывать часы</option>
+              </select>
+              <label class="inline" id="hoursMaxWrap" style="margin-top:6px">не больше <input type="number" id="steamMaxHours" min="0" step="0.5" style="width:80px"> ч</label>
+            </div>
             <label class="field">
               <span>Не повторять недавно выпавшие</span>
               <select id="noRepeat">
@@ -236,10 +246,7 @@
 
         <div class="card">
           <h3>Что считать «непройденным»</h3>
-          <label class="field"><span>Наиграно не больше, часов — если больше, игра считается уже пройденной (Steam и любые импорты с часами)</span><input type="number" id="steamMaxHours" min="0" step="0.5"></label>
-          <label class="check"><input type="checkbox" id="onlyUnplayed"> только ни разу не запущенные (0 часов)</label>
-          <label class="check"><input type="checkbox" id="requireHours"> убирать игры без данных о часах</label>
-          <p class="muted small">Если у одной копии игры часов больше лимита (например, в Steam), копии из других источников тоже не попадут на колесо.</p>
+          <p class="muted small">Фильтр по наигранным часам — на главной, в настройках рулетки («Часы в игре»). Если у одной копии игры часов больше лимита (например, в Steam), копии из других источников тоже не попадут на колесо.</p>
           <label class="field"><span>PSN / Xbox: прогресс трофеев/ачивок не больше, %</span><input type="number" id="maxProgress" min="0" max="100"></label>
           <p class="muted small">Одинаковые игры из разных источников всегда объединяются по названию (регистр, ™/®, «Edition», «Remastered», римские цифры и т. п. не учитываются).</p>
         </div>

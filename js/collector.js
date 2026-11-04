@@ -238,9 +238,21 @@ async function collectEpic() {
 }
 
 /* ---------- универсальный: выделение или обложки ---------- */
+// «12,5 ч», «3 часа», «40 мин», «12.5 hrs», «2 hours on record» → минуты; если часов в тексте нет — undefined
+function minutesIn(text) {
+  var m = String(text || '').match(/(\d+(?:[.,]\d+)?)\s*(ч\.?|час(?:а|ов)?|h|hrs?|hours?)(?![\p{L}])/iu);
+  if (m) return Math.round(parseFloat(m[1].replace(',', '.')) * 60);
+  m = String(text || '').match(/(\d+)\s*(мин|min|minutes?)(?![\p{L}])/iu);
+  return m ? +m[1] : undefined;
+}
 function collectGeneric() {
   var sel = String(window.getSelection ? window.getSelection() : '').trim();
-  if (sel) return sel.split(/\n+/).map(function (t) { return { title: t.trim() }; });
+  // выделенный список: «Название — 12 ч» → часы тоже забираем
+  if (sel) return sel.split(/\n+/).map(function (t) {
+    var min = minutesIn(t);
+    var title = min == null ? t : t.replace(/[\s\-–—:|·(]*\d+(?:[.,]\d+)?\s*(ч\.?|час\S*|h|hrs?|hours?|мин|min|minutes?)(?![\p{L}]).*$/iu, '');
+    return { title: title.trim() || t.trim(), playtime: min };
+  });
   var bad = /^(logo|avatar|icon|profile|banner|image|img|cover|photo|user|thumbnail|\d+)$/i;
   var res = [];
   document.querySelectorAll('img[alt]').forEach(function (img) {
@@ -248,7 +260,9 @@ function collectGeneric() {
     var w = img.getBoundingClientRect().width || img.naturalWidth;
     if (alt.length < 2 || alt.length > 120 || bad.test(alt) || w < 50) return;
     alt = alt.replace(/\s*(cover|box art|обложка|thumbnail)$/i, '').trim();
-    res.push({ title: alt, cover: img.currentSrc || img.src });
+    // часы ищем в карточке игры рядом с обложкой (если сайт их показывает)
+    var card = img.closest('li, article, [class*="card"], [class*="item"], [class*="game"]');
+    res.push({ title: alt, cover: img.currentSrc || img.src, playtime: card ? minutesIn(card.textContent) : undefined });
   });
   if (!res.length) throw new Error('Не нашёл игр. Выделите список названий мышкой и нажмите закладку ещё раз.');
   return res;
