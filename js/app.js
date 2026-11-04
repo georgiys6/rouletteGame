@@ -436,7 +436,21 @@ async function setupBookmarklet() {
     const site = location.origin + location.pathname;
     $('#bookmarklet').href = 'javascript:' + encodeURIComponent(`(function(){var ROULETTE_URL=${JSON.stringify(site)};${code}\n})();`);
   } catch { $('#bookmarklet').title = 'Не удалось загрузить сборщик'; }
-  $('#bookmarklet').onclick = (e) => { e.preventDefault(); toast('Перетащите кнопку на панель закладок (Ctrl+Shift+B — показать панель)'); };
+  $('#bookmarklet').onclick = (e) => {
+    e.preventDefault();
+    toast('Кнопку не нужно нажимать здесь: перетащите её на панель закладок (Ctrl+Shift+B) или используйте «Скопировать код закладки»');
+  };
+  $('#bmCopy').onclick = async () => {
+    const code = $('#bookmarklet').getAttribute('href');
+    if (!code || code === '#') return toast('Сборщик ещё загружается, попробуйте через секунду', 'err');
+    try {
+      await navigator.clipboard.writeText(code);
+    } catch {
+      const ta = Object.assign(document.createElement('textarea'), { value: code });
+      document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove();
+    }
+    toast('Код скопирован. Создайте закладку (Ctrl+D) и вставьте его в поле URL', 'ok');
+  };
 }
 
 const GUIDE = {

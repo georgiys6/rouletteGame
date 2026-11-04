@@ -208,6 +208,13 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .import-hero p { margin: 0 0 8px; }
 .bookmarklet { font: 700 18px var(--display); text-decoration: none; color: #1a1030; background: linear-gradient(135deg, var(--gold), #ff9e6d);
   padding: 16px 26px; border-radius: 16px; box-shadow: 0 10px 30px rgba(255,209,102,.35); cursor: grab; border: 2px dashed rgba(26,16,48,.4); }
+.bm-actions { display: flex; flex-direction: column; gap: 10px; align-items: stretch; text-align: center; }
+.bm-help { flex: 1 1 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.bm-help details { background: rgba(0,0,0,.22); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+.bm-help summary { cursor: pointer; }
+.bm-help ol { margin: 8px 0 0; padding-left: 20px; font-size: 13px; color: #d9cffb; }
+.bm-help li { margin: 4px 0; }
+kbd { background: rgba(255,255,255,.12); border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 6px; padding: 0 6px; font: 600 12px var(--font); }
 .source-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; margin-bottom: 18px; }
 .source-card { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 16px; padding: 14px 16px; }
 .source-card h4 { margin: 0 0 6px; font: 700 15px var(--display); display: flex; justify-content: space-between; align-items: center; }
