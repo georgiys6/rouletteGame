@@ -184,7 +184,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 @media (max-width: 520px) { .toolbar { grid-template-columns: 1fr; } }
 .add-form { display: flex; gap: 8px; }
 .add-form select { width: 130px; flex: none; }
-.lib-summary { margin: -6px 2px 12px; }
+.lib-summary { margin: -6px 2px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.lib-summary #libClear { margin-left: auto; }
+.link-btn { background: none; border: 0; padding: 0; color: var(--gold); font: inherit; cursor: pointer; text-decoration: underline; }
 .lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
 .game { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; transition: transform .2s, border-color .2s; }
 .game:hover { transform: translateY(-3px); border-color: var(--line-strong); }

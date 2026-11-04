@@ -74,7 +74,9 @@ async function loadRemote() {
 
 function rebuildLibrary() {
   const map = new Map();
-  for (const g of remote.games) map.set(g.id, g);
+  // игры из data/games.json нельзя удалить из браузера, поэтому «очищенные» просто скрываем
+  const hidden = new Set(state.hidden);
+  for (const g of remote.games) if (!hidden.has(g.id)) map.set(g.id, g);
   for (const g of state.imported) map.set(g.id, g);
   library = [...map.values()].sort((a, b) => a.title.localeCompare(b.title, 'ru'));
   $('#libCount').textContent = library.length;
@@ -85,7 +87,11 @@ function eligibility(g) {
   if (f.done) return 'done';
   if (f.off) return 'off';
   if (S.sources[g.source] === false) return 'source';
-  if (g.source === 'steam' && g.playtime != null && g.playtime > S.steamMaxHours * 60) return 'filtered';
+  // часы учитываются для любого источника, где они известны (Steam, импорт с колонкой часов и т. п.)
+  if (g.playtime != null) {
+    const maxMin = S.onlyUnplayed ? 0 : (+S.steamMaxHours || 0) * 60;
+    if (g.playtime > maxMin) return 'played';
+  } else if (S.requireHours) return 'nohours';
   if ((g.source === 'psn' || g.source === 'xbox') && g.progress != null && g.progress > S.maxProgress) return 'filtered';
   return 'ok';
 }
@@ -99,8 +105,12 @@ function recentKeys() {
 function rebuildPool() {
   const ok = library.filter((g) => eligibility(g) === 'ok');
   // одна и та же игра из разных источников / с разным написанием — одна запись в пуле.
-  // флаг «пройдено»/«исключена» на любой копии исключает игру целиком.
-  const doneKeys = new Set(library.filter((g) => flag(g.id).done || flag(g.id).off).map((g) => normTitle(g.title)));
+  // флаг «пройдено»/«исключена», а также наигранные часы или прогресс на любой копии исключают игру целиком
+  // (например, в Steam 30 ч, а в Xbox та же игра без данных — на колесо она не попадёт).
+  const doneKeys = new Set(library.filter((g) => {
+    const e = eligibility(g);
+    return e === 'done' || e === 'off' || e === 'played' || e === 'filtered' || flag(g.id).done || flag(g.id).off;
+  }).map((g) => normTitle(g.title)));
   const groups = new Map();
   for (const g of ok) {
     const k = normTitle(g.title) || g.id;
@@ -392,7 +402,7 @@ document.addEventListener('paste', (e) => {
 
 // ================= библиотека =================
 let libLimit = 120;
-const STATUS_LABEL = { ok: 'в рулетке', filtered: 'отсеяна фильтром', off: 'исключена', done: 'пройдена', source: 'источник выключен' };
+const STATUS_LABEL = { ok: 'в рулетке', filtered: 'отсеяна по прогрессу', played: 'уже наиграно больше лимита', nohours: 'нет данных о часах', off: 'исключена', done: 'пройдена', source: 'источник выключен' };
 
 function renderLibrary() {
   const q = $('#libSearch').value.trim().toLowerCase();
@@ -404,12 +414,16 @@ function renderLibrary() {
     if (st) {
       const e = eligibility(g);
       if (st === 'pool' && e !== 'ok') return false;
-      if (st === 'filtered' && e !== 'filtered' && e !== 'source') return false;
+      if (st === 'filtered' && !['filtered', 'played', 'nohours', 'source'].includes(e)) return false;
       if (st !== 'pool' && st !== 'filtered' && e !== st) return false;
     }
     return true;
   });
   $('#libSummary').textContent = `Найдено: ${list.length}`;
+  const hiddenNow = remote.games.filter((g) => state.hidden.includes(g.id)).length;
+  $('#libHiddenInfo').hidden = !hiddenNow;
+  $('#libHiddenInfo').innerHTML = hiddenNow ? `Скрыто игр из синхронизации: ${hiddenNow} · <button class="link-btn" id="libUnhide">вернуть</button>` : '';
+  $('#libClear').disabled = !library.length;
   $('#libGrid').innerHTML = list.slice(0, libLimit).map((g) => {
     const e = eligibility(g), f = flag(g.id);
     const imported = state.imported.some((x) => x.id === g.id);
@@ -438,6 +452,32 @@ $('#libGrid').onclick = (e) => {
   save(); rebuildPool(); renderLibrary(); renderRouletteSide();
 };
 $('#libSearch').oninput = () => { libLimit = 120; renderLibrary(); };
+
+// «Очистить библиотеку»: удаляет импортированные и добавленные вручную игры, отметки «пройдена/исключена»
+// и скрывает игры из синхронизации (сам файл data/games.json из браузера не изменить).
+// Новые игры, которые появятся при следующей синхронизации, будут видны. История и настройки не трогаются.
+$('#libClear').onclick = () => {
+  if (spinning) return;
+  const imp = state.imported.length, rem = remote.games.filter((g) => !state.hidden.includes(g.id)).length;
+  if (!confirm(`Очистить библиотеку?
+
+• импортированные и добавленные вручную игры: ${imp} — удалятся
+• игры из синхронизации: ${rem} — скроются (их можно вернуть)
+• отметки «пройдена» и «исключена» — сбросятся
+
+История и настройки останутся.`)) return;
+  state.imported = [];
+  state.flags = {};
+  state.hidden = [...new Set([...state.hidden, ...remote.games.map((g) => g.id)])];
+  save(); refreshAll();
+  toast('Библиотека очищена', 'ok');
+};
+$('#libHiddenInfo').onclick = (e) => {
+  if (e.target.id !== 'libUnhide') return;
+  state.hidden = [];
+  save(); refreshAll();
+  toast('Игры из синхронизации возвращены', 'ok');
+};
 $('#libSource').onchange = $('#libStatus').onchange = () => { libLimit = 120; renderLibrary(); };
 $('#libMore').onclick = () => { libLimit += 240; renderLibrary(); };
 $('#addForm').onsubmit = (e) => {
@@ -585,6 +625,10 @@ function bindSettings() {
   const refilter = () => { rebuildPool(); refillWheel(); renderLibrary(); };
 
   num('steamMaxHours', 'steamMaxHours', refilter);
+  const syncHours = () => { $('#steamMaxHours').disabled = !!S.onlyUnplayed; };
+  chk('onlyUnplayed', 'onlyUnplayed', () => { syncHours(); refilter(); });
+  chk('requireHours', 'requireHours', refilter);
+  syncHours();
   num('maxProgress', 'maxProgress', refilter);
   const nr = $('#noRepeat');
   nr.value = String(S.noRepeat);
@@ -654,7 +698,7 @@ function bindSettings() {
         toast(`Импортировано игр: ${importGames(source, games, false)}`, 'ok'); return;
       }
       state.imported = (d.imported || []).map((g) => makeGame(g.source, g)).filter(Boolean);
-      state.flags = d.flags || {}; state.history = d.history || [];
+      state.flags = d.flags || {}; state.history = d.history || []; state.hidden = d.hidden || [];
       Object.assign(S, DEFAULT_SETTINGS, d.settings || {});
       save(); location.reload();
     } catch (err) { toast('Не удалось восстановить: ' + err.message, 'err'); }

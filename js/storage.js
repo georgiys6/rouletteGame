@@ -6,7 +6,9 @@ export const DEFAULT_SETTINGS = {
   mode: 'classic',
   wheelSize: 16,
   sources: {},            // { steam: false } — выключенные источники
-  steamMaxHours: 2,
+  steamMaxHours: 2,       // больше стольких часов — считаем игру уже пройденной/начатой (любой источник с часами)
+  onlyUnplayed: false,    // только ни разу не запущенные (0 часов)
+  requireHours: false,    // убирать игры, по которым часов нет вообще (PSN, ручные и т. п.)
   maxProgress: 50,
   noRepeat: 3,            // не повторять N последних выпавших игр
   spinSeconds: 8,
@@ -29,6 +31,7 @@ export function loadState() {
     imported: Array.isArray(s.imported) ? s.imported : [],
     flags: s.flags && typeof s.flags === 'object' ? s.flags : {},
     history: Array.isArray(s.history) ? s.history : [],
+    hidden: Array.isArray(s.hidden) ? s.hidden : [],   // id игр из синхронизации, убранных кнопкой «Очистить библиотеку»
     settings: { ...DEFAULT_SETTINGS, ...(s.settings || {}) },
   };
 }
