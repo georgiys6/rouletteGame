@@ -8,7 +8,7 @@ export const DEFAULT_SETTINGS = {
   sources: {},            // { steam: false } — выключенные источники
   steamMaxHours: 2,
   maxProgress: 50,
-  dedupe: true,
+  noRepeat: 3,            // не повторять N последних выпавших игр
   spinSeconds: 8,
   sound: true,
   confetti: true,

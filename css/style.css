@@ -208,6 +208,14 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .import-hero p { margin: 0 0 8px; }
 .bookmarklet { font: 700 18px var(--display); text-decoration: none; color: #1a1030; background: linear-gradient(135deg, var(--gold), #ff9e6d);
   padding: 16px 26px; border-radius: 16px; box-shadow: 0 10px 30px rgba(255,209,102,.35); cursor: grab; border: 2px dashed rgba(26,16,48,.4); }
+.seg-ctl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; background: rgba(0,0,0,.25); padding: 4px; border-radius: 12px; margin-bottom: 8px; }
+.seg-ctl button { background: transparent; border: 0; color: var(--muted); font: 700 12px var(--font); padding: 7px 4px; border-radius: 9px; cursor: pointer; white-space: nowrap; transition: .2s; }
+.seg-ctl button:hover { color: var(--text); }
+.seg-ctl button.active { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; }
+.gif-drop { border: 2px dashed var(--line-strong); border-radius: 14px; padding: 16px; text-align: center; font-size: 13px; cursor: pointer; margin-bottom: 14px; transition: .2s; }
+.gif-drop:hover, .gif-drop.over { border-color: var(--gold); background: rgba(255,209,102,.08); }
+.wheel-stage.over::after { content: "Отпустите, чтобы поставить гифку"; position: absolute; inset: 0; border-radius: 50%; display: grid; place-items: center; z-index: 5;
+  background: rgba(13,8,24,.75); border: 3px dashed var(--gold); font: 700 18px var(--display); color: var(--gold); text-align: center; padding: 20%; }
 .bm-actions { display: flex; flex-direction: column; gap: 10px; align-items: stretch; text-align: center; }
 .bm-help { flex: 1 1 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
 .bm-help details { background: rgba(0,0,0,.22); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }

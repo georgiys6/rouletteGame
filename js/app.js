@@ -90,10 +90,16 @@ function eligibility(g) {
   return 'ok';
 }
 
+// названия недавно выпавших игр (для режима «не повторять»)
+function recentKeys() {
+  const n = +S.noRepeat || 0;
+  return new Set(n ? state.history.slice(0, n).map((h) => normTitle(h.title)) : []);
+}
+
 function rebuildPool() {
   const ok = library.filter((g) => eligibility(g) === 'ok');
-  if (!S.dedupe) { pool = ok.map((g) => ({ ...g, ids: [g.id], sources: [g.source] })); return; }
-  // флаг «пройдено» на любой копии игры исключает её из всех источников
+  // одна и та же игра из разных источников / с разным написанием — одна запись в пуле.
+  // флаг «пройдено»/«исключена» на любой копии исключает игру целиком.
   const doneKeys = new Set(library.filter((g) => flag(g.id).done || flag(g.id).off).map((g) => normTitle(g.title)));
   const groups = new Map();
   for (const g of ok) {
@@ -107,7 +113,14 @@ function rebuildPool() {
       if (!coverOf(cur) && coverOf(g)) { cur.cover = coverOf(g); }
     }
   }
+  for (const [k, g] of groups) g.key = k;
   pool = [...groups.values()];
+  // недавно выпавшие убираем, но только если без них останется хотя бы 2 игры
+  const recent = recentKeys();
+  if (recent.size) {
+    const fresh = pool.filter((g) => !recent.has(g.key));
+    if (fresh.length >= 2) pool = fresh;
+  }
 }
 
 function refillWheel() {
@@ -179,12 +192,34 @@ function showWinner(game, isElim) {
   $('#winTitle').textContent = game.title;
   $('#winMeta').innerHTML = (game.sources || [game.source]).map(badge).join('') + (metaText(game) ? `<span>${esc(metaText(game))}</span>` : '');
   $('#winModal').hidden = false;
-  state.history.unshift({ title: game.title, source: game.source, mode: S.mode, at: Date.now() });
-  state.history = state.history.slice(0, 50);
-  save();
-  renderHistory();
+  if (lastRecorded !== game) {
+    lastRecorded = game;
+    state.history.unshift({ title: game.title, source: game.source, mode: S.mode, at: Date.now() });
+    state.history = state.history.slice(0, 200);
+    save();
+    renderHistory();
+  }
 }
-function closeWinner() { $('#winModal').hidden = true; wheel.setHighlight(-1); }
+let lastRecorded = null;
+
+function closeWinner() {
+  $('#winModal').hidden = true;
+  wheel.setHighlight(-1);
+  // «не повторять»: в обычном режиме выпавшая игра уходит с колеса, на её место встаёт новая
+  if (S.mode === 'classic' && +S.noRepeat > 0 && currentWinner) {
+    const i = wheelItems.indexOf(currentWinner);
+    if (i >= 0) {
+      rebuildPool();
+      const onWheel = new Set(wheelItems.map((g) => g.key));
+      const spare = shuffle(pool.filter((g) => !onWheel.has(g.key)));
+      if (spare.length) wheelItems[i] = spare[0];
+      else if (wheelItems.length > 2) wheelItems.splice(i, 1);
+      wheel.setItems(wheelItems);
+      renderRouletteSide();
+    }
+  }
+  currentWinner = null;
+}
 
 $('#winOk').onclick = closeWinner;
 $('#winModal').onclick = (e) => { if (e.target.id === 'winModal') closeWinner(); };
@@ -287,37 +322,73 @@ async function applyGifs() {
   hubImg.hidden = !src;
   if (src) hubImg.src = src; else hubImg.removeAttribute('src');
   if (!S.gifRotate) hubImg.style.transform = '';
-  $('#gifPreview').innerHTML = src ? `<img src="${esc(src)}" alt="">` : '<span>нет гифки</span>';
-  $('#gifPreview').style.borderRadius = '50%';
+  $('#gifClear').hidden = !src;
 
   const wg = $('#winGif');
   wg.hidden = !wsrc;
   if (wsrc) wg.src = wsrc; else wg.removeAttribute('src');
   $('#winGifPreview').innerHTML = wsrc ? `<img src="${esc(wsrc)}" alt="">` : '<span>нет гифки</span>';
 }
-function bindGif(prefix, key, fileKey, urlKey) {
-  $(`#${prefix}File`).onchange = async (e) => {
-    const f = e.target.files[0]; if (!f) return;
-    if (f.size > 25 * 1024 * 1024) { toast('Файл больше 25 МБ — возьмите поменьше', 'err'); return; }
-    await putFile(key, f);
-    S[fileKey] = true; S[urlKey] = ''; save();
-    $(`#${prefix}Url`).value = '';
-    applyGifs(); toast('Гифка сохранена', 'ok');
-    e.target.value = '';
-  };
-  $(`#${prefix}UrlApply`).onclick = async () => {
-    const u = $(`#${prefix}Url`).value.trim();
-    S[urlKey] = u; S[fileKey] = false; save();
-    await delFile(key); applyGifs();
-  };
+const GIF_SLOTS = {
+  gif: { fileKey: 'gifFile', urlKey: 'gifUrl', input: 'gifUrl' },
+  winGif: { fileKey: 'winGifFile', urlKey: 'winGifUrl', input: 'winGifUrl' },
+};
+async function setGifFile(key, f) {
+  if (!f || !f.type.startsWith('image/')) { toast('Нужен файл-картинка (GIF, PNG, JPG, WEBP)', 'err'); return; }
+  if (f.size > 25 * 1024 * 1024) { toast('Файл больше 25 МБ — возьмите поменьше', 'err'); return; }
+  const slot = GIF_SLOTS[key];
+  await putFile(key, f);
+  S[slot.fileKey] = true; S[slot.urlKey] = ''; save();
+  $('#' + slot.input).value = '';
+  await applyGifs(); toast('Гифка установлена', 'ok');
+}
+async function setGifUrl(key, u) {
+  const slot = GIF_SLOTS[key];
+  S[slot.urlKey] = u.trim(); S[slot.fileKey] = false; save();
+  $('#' + slot.input).value = S[slot.urlKey];
+  await delFile(key); await applyGifs();
+  if (u) toast('Гифка установлена', 'ok');
+}
+function bindGif(prefix, key) {
+  $(`#${prefix}File`).onchange = async (e) => { await setGifFile(key, e.target.files[0]); e.target.value = ''; };
+  $(`#${prefix}UrlApply`).onclick = () => setGifUrl(key, $(`#${prefix}Url`).value);
+  $(`#${prefix}Url`).onkeydown = (e) => { if (e.key === 'Enter') setGifUrl(key, e.target.value); };
+  const { fileKey, urlKey } = GIF_SLOTS[key];
   $(`#${prefix}Clear`).onclick = async () => {
     S[urlKey] = ''; S[fileKey] = false; save();
     $(`#${prefix}Url`).value = '';
     await delFile(key); applyGifs();
   };
 }
-bindGif('gif', 'gif', 'gifFile', 'gifUrl');
-bindGif('winGif', 'winGif', 'winGifFile', 'winGifUrl');
+bindGif('gif', 'gif');
+bindGif('winGif', 'winGif');
+
+// гифка с главной: клик по зоне, перетаскивание (на зону или на колесо), вставка из буфера
+const gifDrop = $('#gifDrop');
+gifDrop.onclick = () => $('#gifFile').click();
+function dropTarget(el) {
+  let depth = 0;
+  el.addEventListener('dragenter', (e) => { if (e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('text/uri-list')) { depth++; el.classList.add('over'); e.preventDefault(); } });
+  el.addEventListener('dragover', (e) => e.preventDefault());
+  el.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; el.classList.remove('over'); } });
+  el.addEventListener('drop', (e) => {
+    e.preventDefault(); depth = 0; el.classList.remove('over');
+    const f = e.dataTransfer.files[0];
+    if (f) return setGifFile('gif', f);
+    // гифку перетащили прямо с другого сайта (giphy, tenor…)
+    const url = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || '').split('\n')[0].trim();
+    if (/^https?:\/\//.test(url)) setGifUrl('gif', url);
+  });
+}
+dropTarget(gifDrop);
+dropTarget($('#wheelStage'));
+document.addEventListener('paste', (e) => {
+  if (!$('#view-roulette').classList.contains('active') || /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
+  if (item) { e.preventDefault(); return setGifFile('gif', item.getAsFile()); }
+  const text = e.clipboardData?.getData('text') || '';
+  if (/^https?:\/\/\S+\.(gif|png|jpe?g|webp)(\?\S*)?$/i.test(text.trim())) { e.preventDefault(); setGifUrl('gif', text); }
+});
 
 // ================= библиотека =================
 let libLimit = 120;
@@ -515,7 +586,10 @@ function bindSettings() {
 
   num('steamMaxHours', 'steamMaxHours', refilter);
   num('maxProgress', 'maxProgress', refilter);
-  chk('optDedupe', 'dedupe', refilter);
+  const nr = $('#noRepeat');
+  nr.value = String(S.noRepeat);
+  if (nr.value === '') nr.value = '3';
+  nr.onchange = () => { S.noRepeat = +nr.value; save(); if (!spinning) refilter(); };
   chk('optSound', 'sound', () => (sound.enabled = S.sound));
   chk('optConfetti', 'confetti');
   chk('gifRotate', 'gifRotate', applyGifs);
@@ -523,9 +597,21 @@ function bindSettings() {
   $('#gifCover').checked = !S.gifContain;
   $('#gifCover').onchange = (e) => { S.gifContain = !e.target.checked; save(); applyGifs(); };
 
+  // скорость: пресеты + точная настройка ползунком (длительность вращения в секундах)
   const spinSec = $('#spinSec');
-  spinSec.value = S.spinSeconds; $('#spinSecVal').textContent = S.spinSeconds;
-  spinSec.oninput = () => { S.spinSeconds = +spinSec.value; $('#spinSecVal').textContent = S.spinSeconds; save(); };
+  const showSpeed = () => {
+    const s = S.spinSeconds;
+    const name = s <= 2.5 ? '⚡ турбо' : s <= 5 ? 'быстро' : s <= 10 ? 'обычно' : '🐢 плавно';
+    $('#spinSecVal').textContent = `${name}, ${s} с`;
+    spinSec.value = s;
+    $$('#speedPresets button').forEach((b) => b.classList.toggle('active', +b.dataset.sec === s));
+  };
+  spinSec.oninput = () => { S.spinSeconds = +spinSec.value; save(); showSpeed(); };
+  $('#speedPresets').onclick = (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    S.spinSeconds = +b.dataset.sec; save(); showSpeed();
+  };
+  showSpeed();
 
   const gs = $('#gifSize');
   gs.value = S.gifSize; $('#gifSizeVal').textContent = S.gifSize + '%';

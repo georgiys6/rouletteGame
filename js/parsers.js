@@ -22,14 +22,32 @@ export function slugify(s) {
     .replace(/^-+|-+$/g, '');
 }
 
-// Ключ для поиска одной и той же игры в разных источниках.
+// Ключ для поиска одной и той же игры в разных источниках и написаниях:
+// «The Witcher® 3: Wild Hunt – Game of the Year Edition» и «Witcher 3 Wild Hunt» → «witcher-3-wild-hunt».
+const ROMAN = { i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6, vii: 7, viii: 8, ix: 9, x: 10, xi: 11, xii: 12, xiii: 13, xiv: 14, xv: 15, xvi: 16 };
+// срезаются сами по себе
+const TAIL_ALONE = "game of the year|goty|remastered|director'?s cut|final cut";
+// срезаются только вместе с «Edition/Version» (иначе «Pokémon Gold» превратилась бы в «Pokémon»)
+const TAIL_EDITION = "definitive|deluxe|digital deluxe|complete|ultimate|enhanced|standard|gold|anniversary|special|collector'?s|legendary|premium|royal|hd|4k|game of the year|goty";
+const EDITION_TAIL = new RegExp(
+  `\\s*[-:–—]?\\s*(?:the\\s+)?(?:(?:${TAIL_ALONE})(?:\\s+(?:edition|version))?|(?:${TAIL_EDITION})\\s+(?:edition|version|bundle))\\s*$`, 'i');
+
 export function normTitle(s) {
-  return slugify(
-    String(s ?? '')
-      .replace(/\((pc|ps4|ps5|xbox[^)]*|switch|steam)\)/gi, '')
-      .replace(/[-:–—]?\s*(game of the year|goty|definitive|deluxe|complete|ultimate|enhanced|remastered|director'?s cut|standard)(\s+edition)?\s*$/i, '')
-      .replace(/\s+edition\s*$/i, '')
-  ).replace(/^the-/, '');
+  let t = String(s ?? '')
+    .replace(/[™®©]/g, '')
+    .replace(/[’`´]/g, "'")
+    .replace(/\s*[([][^)\]]*[)\]]\s*/g, ' ')          // (PC), [PS5], (2019) и любые скобки
+    .replace(/\s*[-–—]\s*(pc|ps[345]|xbox.*|switch|steam|windows)\s*$/i, '')
+    .replace(/&/g, ' and ');
+  // срезаем хвосты изданий, возможно несколько подряд: «… Remastered Deluxe Edition»
+  for (let i = 0; i < 3; i++) {
+    const before = t;
+    t = t.replace(EDITION_TAIL, '').replace(/\s+(edition|version)\s*$/i, '');
+    if (t === before) break;
+  }
+  let slug = slugify(t);
+  slug = slug.split('-').map((w) => (ROMAN[w] && w !== 'i' ? ROMAN[w] : w)).join('-'); // III → 3 (одиночную «I» не трогаем)
+  return slug.replace(/^the-/, '').replace(/-s-/g, 's-').replace(/-s$/, 's') || slugify(s);
 }
 
 const num = (v) => (v === '' || v == null || isNaN(+v) ? undefined : +v);
