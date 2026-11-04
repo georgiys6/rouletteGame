@@ -1,0 +1,50 @@
+name: Sync game libraries
+
+on:
+  schedule:
+    - cron: "17 4 * * *"   # каждый день в 04:17 UTC
+  workflow_dispatch:
+  push:
+    paths:
+      - "roulette.config.json"
+      - "data/import/**"
+      - "scripts/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-games
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Fetch libraries
+        env:
+          STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+          PSN_NPSSO: ${{ secrets.PSN_NPSSO }}
+          OPENXBL_KEY: ${{ secrets.OPENXBL_KEY }}
+        run: node scripts/fetch-games.mjs
+
+      - name: Commit data/games.json
+        run: |
+          if git diff --quiet -- data/games.json; then
+            echo "Изменений нет"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git add data/games.json
+          git commit -m "chore: sync game libraries"
+          git push

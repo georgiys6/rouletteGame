@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backlog Roulette</title>
+  <meta name="description" content="Рулетка непройденных игр: Steam, Backloggd, PSN, Xbox, Epic, Nintendo и другие.">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Unbounded:wght@500;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="bg-orbs" aria-hidden="true"><span></span><span></span><span></span></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/favicon.svg" alt="" width="34" height="34">
+      <div>
+        <div class="brand-title">Backlog Roulette</div>
+        <div class="brand-sub">пусть судьба выберет, во что играть</div>
+      </div>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-view="roulette">🎡 Рулетка</button>
+      <button class="tab" data-view="library">📚 Библиотека <span class="pill" id="libCount">0</span></button>
+      <button class="tab" data-view="import">📥 Импорт</button>
+      <button class="tab" data-view="settings">⚙️ Настройки</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ================= РУЛЕТКА ================= -->
+    <section class="view active" id="view-roulette">
+      <div class="roulette-layout">
+        <div class="stage-col">
+          <div class="mode-switch" role="radiogroup">
+            <button class="mode active" data-mode="classic">
+              <b>Обычная</b><small>одна прокрутка — одна игра</small>
+            </button>
+            <button class="mode" data-mode="elimination">
+              <b>На выбывание</b><small>выпавшая игра вылетает, последняя побеждает</small>
+            </button>
+          </div>
+
+          <div class="wheel-stage" id="wheelStage">
+            <div class="wheel-glow"></div>
+            <div class="pointer" id="pointer"><svg viewBox="0 0 60 70"><defs><linearGradient id="pg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#ffd166"/></linearGradient></defs><path d="M30 68 L6 18 A26 26 0 1 1 54 18 Z" fill="url(#pg)" stroke="#1a1030" stroke-width="3"/><circle cx="30" cy="24" r="9" fill="#1a1030"/></svg></div>
+            <div class="wheel-wrap" id="wheelWrap">
+              <canvas id="wheel"></canvas>
+              <button class="hub" id="hub" title="Крутить!">
+                <img id="hubGif" alt="" hidden>
+                <span class="hub-label" id="hubLabel">КРУТИ</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="stage-actions">
+            <button class="btn btn-primary btn-xl" id="spinBtn">🎲 Крутить</button>
+            <button class="btn" id="shuffleBtn" title="Набрать новые игры на колесо">🔀 Перемешать</button>
+            <button class="btn" id="resetElimBtn" hidden>↺ Заново</button>
+          </div>
+          <div class="stage-info" id="stageInfo"></div>
+        </div>
+
+        <aside class="side-col">
+          <div class="card">
+            <h3>Колесо</h3>
+            <label class="field">
+              <span>Игр на колесе: <b id="wheelSizeVal"></b></span>
+              <input type="range" id="wheelSize" min="2" max="100" step="1">
+            </label>
+            <div class="field">
+              <span>Источники</span>
+              <div class="chips" id="sourceChips"></div>
+            </div>
+            <div class="muted small" id="poolInfo"></div>
+          </div>
+
+          <div class="card" id="elimCard" hidden>
+            <h3>Выбыли <span class="pill" id="elimCount">0</span></h3>
+            <ol class="elim-list" id="elimList"></ol>
+          </div>
+
+          <div class="card">
+            <h3>История <button class="link-btn" id="clearHistory">очистить</button></h3>
+            <ul class="history" id="history"></ul>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ================= БИБЛИОТЕКА ================= -->
+    <section class="view" id="view-library">
+      <div class="card toolbar">
+        <input type="search" id="libSearch" placeholder="Поиск по названию…">
+        <select id="libSource"><option value="">Все источники</option></select>
+        <select id="libStatus">
+          <option value="">Любой статус</option>
+          <option value="pool">В рулетке</option>
+          <option value="filtered">Отсеяны фильтром</option>
+          <option value="off">Исключены вручную</option>
+          <option value="done">Пройденные</option>
+        </select>
+        <form id="addForm" class="add-form">
+          <input id="addTitle" placeholder="Добавить игру вручную…" required>
+          <select id="addSource"></select>
+          <button class="btn btn-primary">＋</button>
+        </form>
+      </div>
+      <div class="lib-summary muted small" id="libSummary"></div>
+      <div class="lib-grid" id="libGrid"></div>
+      <div class="center"><button class="btn" id="libMore" hidden>Показать ещё</button></div>
+    </section>
+
+    <!-- ================= ИМПОРТ ================= -->
+    <section class="view" id="view-import">
+      <div class="import-hero card">
+        <div>
+          <h2>Букмарклет-сборщик</h2>
+          <p>Перетащите кнопку на панель закладок. Потом откройте страницу со своими играми (Steam, Backloggd, Epic, PlayStation, Xbox, Nintendo, MyGameList или любой другой сайт) и нажмите закладку. Сборщик найдёт игры и сам отправит их сюда.</p>
+          <p class="muted small">Сборщик работает прямо на странице, где вы уже вошли в аккаунт. Пароли и токены никуда не уходят.</p>
+        </div>
+        <a class="bookmarklet" id="bookmarklet" href="#" title="Перетащите на панель закладок">🎡 В рулетку</a>
+      </div>
+
+      <div class="source-grid" id="sourceGuide"></div>
+
+      <div class="card">
+        <h3>Вставить список или загрузить файл</h3>
+        <p class="muted small">Поддерживается: по одной игре на строку, CSV (колонка title/name/название), JSON (массив названий или объектов), резервная копия этого сайта.</p>
+        <div class="import-row">
+          <select id="pasteSource"></select>
+          <label class="check"><input type="checkbox" id="pasteReplace" checked> заменить прежний импорт этого источника</label>
+        </div>
+        <textarea id="pasteText" rows="7" placeholder="Hollow Knight&#10;Disco Elysium&#10;Outer Wilds"></textarea>
+        <div class="import-row">
+          <button class="btn btn-primary" id="pasteBtn">Импортировать</button>
+          <label class="btn file-btn">📄 Файл… <input type="file" id="pasteFile" accept=".txt,.csv,.json,.tsv" hidden></label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Автосинхронизация через GitHub Actions</h3>
+        <p>В репозитории есть workflow, который раз в сутки скачивает Steam, PSN и Xbox и кладёт результат в <code>data/games.json</code>. Как настроить, написано в README.</p>
+        <div id="remoteStatus" class="muted small"></div>
+      </div>
+    </section>
+
+    <!-- ================= НАСТРОЙКИ ================= -->
+    <section class="view" id="view-settings">
+      <div class="settings-grid">
+        <div class="card">
+          <h3>Гифка в центре колеса</h3>
+          <div class="gif-preview" id="gifPreview"><span>нет гифки</span></div>
+          <div class="import-row">
+            <label class="btn file-btn">🖼 Загрузить GIF/картинку <input type="file" id="gifFile" accept="image/*" hidden></label>
+            <button class="btn" id="gifClear">Убрать</button>
+          </div>
+          <label class="field"><span>…или ссылка на GIF</span>
+            <div class="inline"><input id="gifUrl" placeholder="https://media.giphy.com/....gif"><button class="btn" id="gifUrlApply">OK</button></div>
+          </label>
+          <label class="field"><span>Размер: <b id="gifSizeVal"></b></span><input type="range" id="gifSize" min="15" max="70"></label>
+          <label class="check"><input type="checkbox" id="gifRotate"> крутить гифку вместе с колесом</label>
+          <label class="check"><input type="checkbox" id="gifCover"> обрезать по кругу (иначе вписать целиком)</label>
+        </div>
+
+        <div class="card">
+          <h3>Гифка победы</h3>
+          <div class="gif-preview" id="winGifPreview"><span>нет гифки</span></div>
+          <div class="import-row">
+            <label class="btn file-btn">🖼 Загрузить <input type="file" id="winGifFile" accept="image/*" hidden></label>
+            <button class="btn" id="winGifClear">Убрать</button>
+          </div>
+          <label class="field"><span>…или ссылка</span>
+            <div class="inline"><input id="winGifUrl" placeholder="https://…gif"><button class="btn" id="winGifUrlApply">OK</button></div>
+          </label>
+        </div>
+
+        <div class="card">
+          <h3>Внешний вид и звук</h3>
+          <div class="field"><span>Палитра колеса</span><div class="palettes" id="palettes"></div></div>
+          <label class="field"><span>Длительность вращения: <b id="spinSecVal"></b> с</span><input type="range" id="spinSec" min="2" max="20" step="1"></label>
+          <label class="check"><input type="checkbox" id="optSound"> звук</label>
+          <label class="check"><input type="checkbox" id="optConfetti"> конфетти</label>
+        </div>
+
+        <div class="card">
+          <h3>Что считать «непройденным»</h3>
+          <label class="field"><span>Steam: наиграно не больше, часов (0 — только ни разу не запущенные)</span><input type="number" id="steamMaxHours" min="0" step="0.5"></label>
+          <label class="field"><span>PSN / Xbox: прогресс трофеев/ачивок не больше, %</span><input type="number" id="maxProgress" min="0" max="100"></label>
+          <label class="check"><input type="checkbox" id="optDedupe"> объединять одинаковые игры из разных источников</label>
+        </div>
+
+        <div class="card">
+          <h3>Данные</h3>
+          <p class="muted small">Ваши импорты и отметки хранятся в этом браузере (localStorage). Сделайте копию, чтобы перенести их на другое устройство.</p>
+          <div class="import-row">
+            <button class="btn" id="exportBtn">💾 Скачать копию</button>
+            <label class="btn file-btn">📂 Восстановить <input type="file" id="restoreFile" accept=".json" hidden></label>
+            <button class="btn btn-danger" id="wipeBtn">Сбросить всё</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Победитель -->
+  <div class="modal" id="winModal" hidden>
+    <div class="modal-card">
+      <div class="win-kicker" id="winKicker">Выпало!</div>
+      <img class="win-gif" id="winGif" alt="" hidden>
+      <div class="win-cover" id="winCover"></div>
+      <h2 class="win-title" id="winTitle"></h2>
+      <div class="win-meta" id="winMeta"></div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="winOk">Играю! 🎮</button>
+        <button class="btn" id="winDone">✓ Уже прошёл</button>
+        <button class="btn" id="winOff">Убрать из рулетки</button>
+      </div>
+    </div>
+  </div>
+
+  <canvas id="confetti" aria-hidden="true"></canvas>
+  <div class="toasts" id="toasts"></div>
+
+  <footer class="foot muted small">Backlog Roulette · статический сайт для GitHub Pages · данные хранятся у вас</footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
